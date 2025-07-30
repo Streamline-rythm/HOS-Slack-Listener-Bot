@@ -15,7 +15,7 @@ for var in required_env_vars:
 # Create connection pool using Cloud SQL Unix socket
 pool = pooling.MySQLConnectionPool(
     pool_name="cloudsql_pool",
-    pool_size=10,
+    pool_size=200,
     pool_reset_session=True,
     user=os.getenv("DB_USER"),
     password=os.getenv("DB_PASSWORD"),
