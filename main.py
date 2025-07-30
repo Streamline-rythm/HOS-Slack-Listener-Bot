@@ -12,7 +12,7 @@ load_dotenv()
 
 # Configuration
 SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET")
-TARGET_CHANNEL = os.environ.get("TARGET_CHANNEL")  # Slack channel ID
+TARGET_CHANNEL = "C097MNT5HM5"  # Slack channel ID
 PORT = int(os.environ.get("PORT", 8080))
 # FORWARD_ENDPOINT = os.environ.get("FORWARD_ENDPOINT")  # URL to forward replies to
 
@@ -40,6 +40,7 @@ async def slack_events(
     x_slack_request_timestamp: str = Header(None),
     x_slack_signature: str = Header(None),
 ):
+    print("-------------- slack/events endpoint -----------------")
     body = await request.body()
 
     if not verify_slack_request(body, x_slack_request_timestamp, x_slack_signature):
