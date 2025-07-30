@@ -82,7 +82,11 @@ def get_parent_message(timestamp: str):
 
         response = requests.post(url = f"{SLACK_REFLIES_API_URL}?channel={TARGET_CHANNEL}&ts={timestamp}&limit=1&pretty=1", headers = headers)
 
-        print(f"get messages from slack for replies: {response}")
+        if response.get('messages'):
+            messages = response.get('messages')
+            parent_message = messages[0]["text"]
+            print(f"Parent message of {timestamp}: {parent_message}")
+
     except Exception as e:
         print(f"Error getting parent messages from slack: {e}")
 
