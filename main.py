@@ -80,7 +80,7 @@ def get_parent_message(timestamp: str):
             "Authorization": f"Bearer {SLACK_BOT_TOKEN}"
         }
 
-        response = requests.post(url = SLACK_REFLIES_API_URL, headers = headers)
+        response = requests.post(url = f"{SLACK_REFLIES_API_URL}?channel={TARGET_CHANNEL}&ts={timestamp}&limit=1&pretty=1", headers = headers)
 
         print(f"get messages from slack for replies: {response}")
     except Exception as e:
