@@ -7,14 +7,18 @@ import requests
 from fastapi import FastAPI, Request, Header, HTTPException, Response
 from dotenv import load_dotenv
 import uvicorn
+from db import pool  # assuming db.py is in the same directory
+import mysql.connector
+from datetime import datetime
 
 load_dotenv()
 
 # Configuration
 SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET")
 TARGET_CHANNEL = "C097MNT5HM5"  # Slack channel ID
+SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
+# FORWARD_ENDPOINT = "https://hos-miniapp-backend-181509438418.us-central1.run.app/webhook/reply"
 PORT = int(os.environ.get("PORT", 8080))
-# FORWARD_ENDPOINT = os.environ.get("FORWARD_ENDPOINT")  # URL to forward replies to
 
 app = FastAPI()
 
@@ -33,6 +37,35 @@ def verify_slack_request(body: bytes, timestamp: str, slack_signature: str) -> b
     ).hexdigest()
 
     return hmac.compare_digest(my_signature, slack_signature)
+def get_id_from_message(parent):
+    try:
+        conn = pool.get_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT MAX(id) AS max_id FROM messages WHERE content = %s", (parent,))
+        parent_id = cursor.fetchone()  
+        cursor.close()
+        conn.close()
+        return parent_id
+    except mysql.connector.Error as err:
+        print(f"❌ Database error: {err}")
+        return None
+
+def save_slack_reply_to_database(message_id, reply_content, reply_at):
+    try:
+        conn = pool.get_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute(
+            'INSERT INTO replies (message_id, reply_content, reply_at) VALUES (%s, %s, %s)',
+            (message_id, reply_content, reply_at)
+        )
+        conn.commit()  # Important: commit the insert
+        inserted_id = cursor.lastrowid
+        cursor.close()
+        conn.close()
+        return inserted_id
+    except mysql.connector.Error as err:
+        print(f"❌ Database error: {err}")
+        return None
 
 @app.post("/slack/events")
 async def slack_events(
@@ -61,22 +94,26 @@ async def slack_events(
         and "thread_ts" in event
         and event["ts"] != event["thread_ts"]
     ):  
-        print(f"event = {event}")
 
-        payload = {
-            "user": event.get("user"),
-            "text": event.get("text"),
-            "thread_ts": event.get("thread_ts"),
-            "ts": event.get("ts"),
-            "channel": event.get("channel"),
-        }
+        try:
+            event_parent_timestamp = event.get("thread_ts")
+            parent_url = f"https://slack.com/api/conversations.replies?channel={TARGET_CHANNEL}&ts={event_parent_timestamp}&limit=1&pretty=1"
+            parent_headers = {
+                "Authorization": f"Bearer {SLACK_BOT_TOKEN}"
+            }
+            parent_message = requests.post(url=parent_url, headers=headers)
+            parent_message_list = parent_message["messages"]
+            parent = parent_message_list[0]["text"] 
+            print(f"parent message content: {parent}")
 
-        print(f"payload= {payload}")
-        # try:
-        #     response = requests.post(FORWARD_ENDPOINT, json=payload)
-        #     print(f"Forwarded reply: {response.status_code}")
-        # except Exception as e:
-        #     print(f"Error forwarding reply: {e}")
+            parent_id = get_id_from_message(parent)
+
+            current_time = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+            inserted_id = save_slack_reply_to_database(parent_id, event.get("text"), current_time)
+            print(f"inserted_id= {inserted_id}")
+            
+        except Exception as e:
+            print(f"Error forwarding reply: {e}")
 
     return Response(status_code=200)
 
