@@ -5,6 +5,7 @@ import hmac
 import hashlib
 import uvicorn
 import requests
+from datetime import datetime
 from fastapi import FastAPI, HTTPException, Request, Header
 from dotenv import load_dotenv
 
@@ -44,25 +45,6 @@ def verify_slack_request(body: bytes, timestamp: str, slack_signature: str) -> b
 
     # 5. Use constant-time comparison to prevent timing attacks
     return hmac.compare_digest(my_signature, slack_signature)
-
-
-
-# def save_slack_reply_to_database(message_id, reply_content, reply_at):
-#     try:
-#         conn = pool.get_connection()
-#         cursor = conn.cursor(dictionary=True)
-#         cursor.execute(
-#             'INSERT INTO replies (message_id, reply_content, reply_at) VALUES (%s, %s, %s)',
-#             (message_id, reply_content, reply_at)
-#         )
-#         conn.commit()  # Important: commit the insert
-#         inserted_id = cursor.lastrowid
-#         cursor.close()
-#         conn.close()
-#         return inserted_id
-#     except mysql.connector.Error as err:
-#         print(f"❌ Database error: {err}")
-#         return None
 
 def get_parent_message_id(msg):
     try:
@@ -109,6 +91,30 @@ def get_parent_message(timestamp: str):
         print(f"Error getting parent messages from Slack: {e}")
         return None
 
+def save_slack_response(message_id, reply_content):
+    try:
+        with pool.get_connection() as conn:
+            cursor = conn.cursor(dictionary=True)
+            reply_at = datetime.utcnow().isoformat()[:19].replace('T', ' ')
+
+            cursor.execute(
+                'INSERT INTO replies (message_id, reply_content, reply_at) VALUES (%s, %s, %s)',
+                (message_id, reply_content, reply_at)
+            )
+            conn.commit()  # Important: commit the insert
+            cursor.close()
+            conn.close()
+            result = {
+                "message_id": message_id,
+                "reply_content": reply_content,
+                "reply_at": reply_at
+            }
+            return result
+
+    except Exception as err:
+        print(f"❌ Error Saving to database: {err}")
+        return None
+
 @app.post("/slack/events")
 async def slack_events(
     request: Request,
@@ -137,12 +143,19 @@ async def slack_events(
         parent_message = get_parent_message(event["thread_ts"])
 
         if not parent_message:
-            raise ValueError("parent_message is required")
+            raise ValueError("Parent message is required")
 
         parent_message_id = get_parent_message_id(parent_message)
 
         if not parent_message_id:
-            raise ValueError("parent_message_id not found")
+            raise ValueError("Parent message_id not found")
+
+        saving_result = save_slack_response(parent_message_id, event["text"])
+
+        if not saving_result:
+            raise ValueError("Fail saving slack reply to database")
+
+        print(f"Saving result: {saving_result}")
 
 if __name__ == "__main__":
     print(f"Listening for Slack replies on port {PORT}")
