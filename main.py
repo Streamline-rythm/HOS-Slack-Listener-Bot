@@ -82,13 +82,18 @@ def get_parent_message(timestamp: str):
 
         response = requests.post(url = f"{SLACK_REFLIES_API_URL}?channel={TARGET_CHANNEL}&ts={timestamp}&limit=1&pretty=1", headers = headers)
 
-        if response.get('messages'):
-            messages = response.get('messages')
-            parent_message = messages[0]["text"]
-            print(f"Parent message of {timestamp}: {parent_message}")
+        if not response["messages"]:
+            print("Error getting parent message: No response of API")
+            return None
+
+        messages = response.get('messages')
+        parent_message = messages[0]["text"]
+        print(f"Parent message of {timestamp}: {parent_message}")
+        return parent_message
 
     except Exception as e:
         print(f"Error getting parent messages from slack: {e}")
+        return None
 
 @app.post("/slack/events")
 async def slack_events(
@@ -116,7 +121,10 @@ async def slack_events(
         and "thread_ts" in event
         and event["ts"] != event["thread_ts"]
     ):  
-        get_parent_message(event["thread_ts"])
+        parent_message = get_parent_message(event["thread_ts"])
+
+        if not parent_message:
+            raise ValueError("parent_message is required")
 
     #     try:
     #         parent_headers = {
