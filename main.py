@@ -101,7 +101,9 @@ def get_parent_message(timestamp: str):
 
         parent_message = messages[0].get("text", "")
         print(f"Parent message of {timestamp}: {parent_message}")
-        return parent_message
+        convert_parent_message = parent_message.split("[")[-1].replace("`", "").replace("]", "").strip()
+
+        return convert_parent_message
 
     except Exception as e:
         print(f"Error getting parent messages from Slack: {e}")
