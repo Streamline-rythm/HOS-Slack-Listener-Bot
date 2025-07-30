@@ -4,6 +4,7 @@ import time
 import hmac
 import hashlib
 import uvicorn
+import requests
 from fastapi import FastAPI, HTTPException, Request, Header
 from dotenv import load_dotenv
 
@@ -14,6 +15,7 @@ TARGET_CHANNEL = "C097MNT5HM5"
 PORT = int(os.environ.get("PORT", 8080))
 SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
 SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET")
+SLACK_REFLIES_API_URL = "https://slack.com/api/conversations.replies"
 
 app = FastAPI()
 
@@ -72,6 +74,18 @@ def verify_slack_request(body: bytes, timestamp: str, slack_signature: str) -> b
 #         print(f"❌ Database error: {err}")
 #         return None
 
+def get_parent_message(timestamp: str):
+    try:
+        headers = {
+            "Authorization": f"Bearer {SLACK_BOT_TOKEN}"
+        }
+
+        response = requests.post(url = SLACK_REFLIES_API_URL, headers = headers)
+
+        print(f"get messages from slack for replies: {response}")
+    except Exception as e:
+        print(f"Error getting parent messages from slack: {e}")
+
 @app.post("/slack/events")
 async def slack_events(
     request: Request,
@@ -85,24 +99,22 @@ async def slack_events(
 
     data = json.loads(body)
 
-    print(f"Data from slack event: {data}")
-    # if data.get("type") != "event_callback":
-    #     return Response(status_code=200)
+    # print(f"Data from slack event: {data}")
+    if data.get("type") != "event_callback":
+        return Response(status_code=200)
 
-    # event = data.get("event", {})
+    event = data.get("event", {})
 
-    # Only capture replies (not original thread messages) in specific channel
-    # if (
-    #     event.get("type") == "message"
-    #     and not event.get("subtype")
-    #     and event.get("channel") == TARGET_CHANNEL
-    #     and "thread_ts" in event
-    #     and event["ts"] != event["thread_ts"]
-    # ):  
+    if (
+        event.get("type") == "message"
+        and not event.get("subtype")
+        and event.get("channel") == TARGET_CHANNEL
+        and "thread_ts" in event
+        and event["ts"] != event["thread_ts"]
+    ):  
+        get_parent_message(event["thread_ts"])
 
     #     try:
-    #         event_parent_timestamp = event.get("thread_ts")
-    #         parent_url = f"https://slack.com/api/conversations.replies?channel={TARGET_CHANNEL}&ts={event_parent_timestamp}&limit=1&pretty=1"
     #         parent_headers = {
     #             "Authorization": f"Bearer {SLACK_BOT_TOKEN}"
     #         }
