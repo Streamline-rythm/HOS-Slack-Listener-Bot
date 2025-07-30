@@ -80,19 +80,28 @@ def get_parent_message(timestamp: str):
             "Authorization": f"Bearer {SLACK_BOT_TOKEN}"
         }
 
-        response = requests.post(url = f"{SLACK_REFLIES_API_URL}?channel={TARGET_CHANNEL}&ts={timestamp}&limit=1&pretty=1", headers = headers)
+        url = f"{SLACK_REFLIES_API_URL}?channel={TARGET_CHANNEL}&ts={timestamp}&limit=1&pretty=1"
+        print(f"url= {url}")
+        
+        response = requests.post(url, headers=headers)  # Use GET for Slack Web API
 
-        if not response["messages"]:
-            print("Error getting parent message: No response of API")
+        if response.status_code != 200:
+            print(f"Slack API error: {response.status_code} - {response.text}")
             return None
 
-        messages = response["messages"]
-        parent_message = messages[0]["text"]
+        data = response.json()
+
+        messages = data.get("messages", [])
+        if not messages:
+            print("Error getting parent message: No messages found")
+            return None
+
+        parent_message = messages[0].get("text", "")
         print(f"Parent message of {timestamp}: {parent_message}")
         return parent_message
 
     except Exception as e:
-        print(f"Error getting parent messages from slack: {e}")
+        print(f"Error getting parent messages from Slack: {e}")
         return None
 
 @app.post("/slack/events")
