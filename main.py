@@ -86,7 +86,7 @@ def get_parent_message(timestamp: str):
             print("Error getting parent message: No response of API")
             return None
 
-        messages = response.get('messages')
+        messages = response["messages"]
         parent_message = messages[0]["text"]
         print(f"Parent message of {timestamp}: {parent_message}")
         return parent_message
