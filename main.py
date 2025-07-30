@@ -8,6 +8,8 @@ import requests
 from fastapi import FastAPI, HTTPException, Request, Header
 from dotenv import load_dotenv
 
+from db import pool
+
 load_dotenv()
 
 # Configuration
@@ -44,18 +46,6 @@ def verify_slack_request(body: bytes, timestamp: str, slack_signature: str) -> b
     return hmac.compare_digest(my_signature, slack_signature)
 
 
-# def get_id_from_message(parent):
-#     try:
-#         conn = pool.get_connection()
-#         cursor = conn.cursor(dictionary=True)
-#         cursor.execute("SELECT MAX(id) AS max_id FROM messages WHERE content = %s", (parent,))
-#         parent_id = cursor.fetchone()  
-#         cursor.close()
-#         conn.close()
-#         return parent_id
-#     except mysql.connector.Error as err:
-#         print(f"❌ Database error: {err}")
-#         return None
 
 # def save_slack_reply_to_database(message_id, reply_content, reply_at):
 #     try:
@@ -73,6 +63,19 @@ def verify_slack_request(body: bytes, timestamp: str, slack_signature: str) -> b
 #     except mysql.connector.Error as err:
 #         print(f"❌ Database error: {err}")
 #         return None
+
+def get_parent_message_id(msg):
+    try:
+        with pool.get_connection() as conn:
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute("SELECT MAX(id) AS max_id FROM messages WHERE content = %s", (msg,))
+            result = cursor.fetchone()
+            cursor.close()
+            print(f"parent_message_id: {result}")
+            return result["max_id"] if result and result["max_id"] else None
+    except Exception as err:
+        print(f"❌ Database error: {err}")
+        return None
 
 def get_parent_message(timestamp: str):
     try:
@@ -117,7 +120,6 @@ async def slack_events(
 
     data = json.loads(body)
 
-    # print(f"Data from slack event: {data}")
     if data.get("type") != "event_callback":
         return Response(status_code=200)
 
@@ -135,25 +137,10 @@ async def slack_events(
         if not parent_message:
             raise ValueError("parent_message is required")
 
-    #     try:
-    #         parent_headers = {
-    #             "Authorization": f"Bearer {SLACK_BOT_TOKEN}"
-    #         }
-    #         parent_message = requests.post(url=parent_url, headers=headers)
-    #         parent_message_list = parent_message["messages"]
-    #         parent = parent_message_list[0]["text"] 
-    #         print(f"parent message content: {parent}")
+        parent_message_id = get_parent_message_id(parent_message)
 
-    #         parent_id = get_id_from_message(parent)
-
-    #         current_time = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
-    #         inserted_id = save_slack_reply_to_database(parent_id, event.get("text"), current_time)
-    #         print(f"inserted_id= {inserted_id}")
-            
-    #     except Exception as e:
-    #         print(f"Error forwarding reply: {e}")
-
-    # return Response(status_code=200)
+        if not parent_message_id:
+            raise ValueError("parent_message_id not found")
 
 if __name__ == "__main__":
     print(f"Listening for Slack replies on port {PORT}")
