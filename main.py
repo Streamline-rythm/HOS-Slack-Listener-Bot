@@ -3,69 +3,74 @@ import json
 import time
 import hmac
 import hashlib
-import requests
-from fastapi import FastAPI, Request, Header, HTTPException, Response
-from dotenv import load_dotenv
 import uvicorn
-from db import pool  # assuming db.py is in the same directory
-import mysql.connector
-from datetime import datetime
+from fastapi import FastAPI, HTTPException, Request, Header
+from dotenv import load_dotenv
 
 load_dotenv()
 
 # Configuration
-SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET")
-TARGET_CHANNEL = "C097MNT5HM5"  # Slack channel ID
-SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
-# FORWARD_ENDPOINT = "https://hos-miniapp-backend-181509438418.us-central1.run.app/webhook/reply"
+TARGET_CHANNEL = "C097MNT5HM5"  
 PORT = int(os.environ.get("PORT", 8080))
+SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
+SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET")
 
 app = FastAPI()
 
 # Slack request verification
 def verify_slack_request(body: bytes, timestamp: str, slack_signature: str) -> bool:
+    # 1. Check if timestamp and signature are present
     if not timestamp or not slack_signature:
         return False
-    if abs(time.time() - int(timestamp)) > 60 * 5:
+
+    # 2. Prevent replay attacks (more than 5 minutes old)
+    current_time = time.time()
+    if abs(current_time - int(timestamp)) > 60 * 5:
         return False
 
+    # 3. Build the signature base string according to Slack’s spec
     sig_basestring = f"v0:{timestamp}:{body.decode('utf-8')}"
+
+    # 4. Compute HMAC SHA256 signature using your Slack signing secret
     my_signature = "v0=" + hmac.new(
         SLACK_SIGNING_SECRET.encode(),
         sig_basestring.encode(),
         hashlib.sha256
     ).hexdigest()
 
+    # 5. Use constant-time comparison to prevent timing attacks
     return hmac.compare_digest(my_signature, slack_signature)
-def get_id_from_message(parent):
-    try:
-        conn = pool.get_connection()
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT MAX(id) AS max_id FROM messages WHERE content = %s", (parent,))
-        parent_id = cursor.fetchone()  
-        cursor.close()
-        conn.close()
-        return parent_id
-    except mysql.connector.Error as err:
-        print(f"❌ Database error: {err}")
-        return None
 
-def save_slack_reply_to_database(message_id, reply_content, reply_at):
-    try:
-        conn = pool.get_connection()
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute(
-            'INSERT INTO replies (message_id, reply_content, reply_at) VALUES (%s, %s, %s)',
-            (message_id, reply_content, reply_at)
-        )
-        conn.commit()  # Important: commit the insert
-        inserted_id = cursor.lastrowid
-        cursor.close()
-        conn.close()
-        return inserted_id
-    except mysql.connector.Error as err:
-        print(f"❌ Database error: {err}")
-        return None
+
+# def get_id_from_message(parent):
+#     try:
+#         conn = pool.get_connection()
+#         cursor = conn.cursor(dictionary=True)
+#         cursor.execute("SELECT MAX(id) AS max_id FROM messages WHERE content = %s", (parent,))
+#         parent_id = cursor.fetchone()  
+#         cursor.close()
+#         conn.close()
+#         return parent_id
+#     except mysql.connector.Error as err:
+#         print(f"❌ Database error: {err}")
+#         return None
+
+# def save_slack_reply_to_database(message_id, reply_content, reply_at):
+#     try:
+#         conn = pool.get_connection()
+#         cursor = conn.cursor(dictionary=True)
+#         cursor.execute(
+#             'INSERT INTO replies (message_id, reply_content, reply_at) VALUES (%s, %s, %s)',
+#             (message_id, reply_content, reply_at)
+#         )
+#         conn.commit()  # Important: commit the insert
+#         inserted_id = cursor.lastrowid
+#         cursor.close()
+#         conn.close()
+#         return inserted_id
+#     except mysql.connector.Error as err:
+#         print(f"❌ Database error: {err}")
+#         return None
 
 @app.post("/slack/events")
 async def slack_events(
@@ -73,7 +78,6 @@ async def slack_events(
     x_slack_request_timestamp: str = Header(None),
     x_slack_signature: str = Header(None),
 ):
-    print("-------------- slack/events endpoint -----------------")
     body = await request.body()
 
     if not verify_slack_request(body, x_slack_request_timestamp, x_slack_signature):
@@ -81,41 +85,42 @@ async def slack_events(
 
     data = json.loads(body)
 
-    if data.get("type") != "event_callback":
-        return Response(status_code=200)
+    print(f"Data from slack event: {data}")
+    # if data.get("type") != "event_callback":
+    #     return Response(status_code=200)
 
-    event = data.get("event", {})
+    # event = data.get("event", {})
 
     # Only capture replies (not original thread messages) in specific channel
-    if (
-        event.get("type") == "message"
-        and not event.get("subtype")
-        and event.get("channel") == TARGET_CHANNEL
-        and "thread_ts" in event
-        and event["ts"] != event["thread_ts"]
-    ):  
+    # if (
+    #     event.get("type") == "message"
+    #     and not event.get("subtype")
+    #     and event.get("channel") == TARGET_CHANNEL
+    #     and "thread_ts" in event
+    #     and event["ts"] != event["thread_ts"]
+    # ):  
 
-        try:
-            event_parent_timestamp = event.get("thread_ts")
-            parent_url = f"https://slack.com/api/conversations.replies?channel={TARGET_CHANNEL}&ts={event_parent_timestamp}&limit=1&pretty=1"
-            parent_headers = {
-                "Authorization": f"Bearer {SLACK_BOT_TOKEN}"
-            }
-            parent_message = requests.post(url=parent_url, headers=headers)
-            parent_message_list = parent_message["messages"]
-            parent = parent_message_list[0]["text"] 
-            print(f"parent message content: {parent}")
+    #     try:
+    #         event_parent_timestamp = event.get("thread_ts")
+    #         parent_url = f"https://slack.com/api/conversations.replies?channel={TARGET_CHANNEL}&ts={event_parent_timestamp}&limit=1&pretty=1"
+    #         parent_headers = {
+    #             "Authorization": f"Bearer {SLACK_BOT_TOKEN}"
+    #         }
+    #         parent_message = requests.post(url=parent_url, headers=headers)
+    #         parent_message_list = parent_message["messages"]
+    #         parent = parent_message_list[0]["text"] 
+    #         print(f"parent message content: {parent}")
 
-            parent_id = get_id_from_message(parent)
+    #         parent_id = get_id_from_message(parent)
 
-            current_time = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
-            inserted_id = save_slack_reply_to_database(parent_id, event.get("text"), current_time)
-            print(f"inserted_id= {inserted_id}")
+    #         current_time = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+    #         inserted_id = save_slack_reply_to_database(parent_id, event.get("text"), current_time)
+    #         print(f"inserted_id= {inserted_id}")
             
-        except Exception as e:
-            print(f"Error forwarding reply: {e}")
+    #     except Exception as e:
+    #         print(f"Error forwarding reply: {e}")
 
-    return Response(status_code=200)
+    # return Response(status_code=200)
 
 if __name__ == "__main__":
     print(f"Listening for Slack replies on port {PORT}")
