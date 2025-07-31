@@ -47,17 +47,22 @@ def verify_slack_request(body: bytes, timestamp: str, slack_signature: str) -> b
     return hmac.compare_digest(my_signature, slack_signature)
 
 def get_parent_message_id(msg):
+    conn = None
+    cursor = None
     try:
-        with pool.get_connection() as conn:
-            cursor = conn.cursor(dictionary=True)
-            cursor.execute("SELECT MAX(id) AS max_id FROM messages WHERE content = %s", (msg,))
-            result = cursor.fetchone()
-            cursor.close()
-            print(f"parent_message_id: {result}")
-            return result["max_id"] if result and result["max_id"] else None
+        conn = pool.get_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT MAX(id) AS max_id FROM messages WHERE content = %s", (msg,))
+        result = cursor.fetchone()
+        print(f"parent_message_id: {result}")
+        return result["max_id"] if result and result["max_id"] else None
     except Exception as err:
         print(f"❌ Database error: {err}")
         return None
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
 
 def get_parent_message(timestamp: str):
     try:
@@ -68,14 +73,13 @@ def get_parent_message(timestamp: str):
         url = f"{SLACK_REFLIES_API_URL}?channel={TARGET_CHANNEL}&ts={timestamp}&limit=1&pretty=1"
         print(f"url= {url}")
         
-        response = requests.post(url, headers=headers)  # Use GET for Slack Web API
+        response = requests.get(url, headers=headers)  # ✅ Use GET not POST
 
         if response.status_code != 200:
             print(f"Slack API error: {response.status_code} - {response.text}")
             return None
 
         data = response.json()
-
         messages = data.get("messages", [])
         if not messages:
             print("Error getting parent message: No messages found")
@@ -91,29 +95,32 @@ def get_parent_message(timestamp: str):
         print(f"Error getting parent messages from Slack: {e}")
         return None
 
+
 def save_slack_response(message_id, reply_content):
+    conn = None
+    cursor = None
     try:
-        with pool.get_connection() as conn:
-            cursor = conn.cursor(dictionary=True)
-            reply_at = datetime.utcnow().isoformat()[:19].replace('T', ' ')
-
-            cursor.execute(
-                'INSERT INTO replies (message_id, reply_content, reply_at) VALUES (%s, %s, %s)',
-                (message_id, reply_content, reply_at)
-            )
-            conn.commit()  # Important: commit the insert
-            cursor.close()
-            conn.close()
-            result = {
-                "message_id": message_id,
-                "reply_content": reply_content,
-                "reply_at": reply_at
-            }
-            return result
-
+        conn = pool.get_connection()
+        cursor = conn.cursor(dictionary=True)
+        reply_at = datetime.utcnow().isoformat()[:19].replace('T', ' ')
+        cursor.execute(
+            'INSERT INTO replies (message_id, reply_content, reply_at) VALUES (%s, %s, %s)',
+            (message_id, reply_content, reply_at)
+        )
+        conn.commit()
+        result = {
+            "message_id": message_id,
+            "reply_content": reply_content,
+            "reply_at": reply_at
+        }
+        return result
     except Exception as err:
         print(f"❌ Error Saving to database: {err}")
         return None
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
 
 @app.post("/slack/events")
 async def slack_events(
@@ -129,7 +136,7 @@ async def slack_events(
     data = json.loads(body)
 
     if data.get("type") != "event_callback":
-        return Response(status_code=200)
+        return {"status": "ignored"}
 
     event = data.get("event", {})
 
@@ -140,22 +147,29 @@ async def slack_events(
         and "thread_ts" in event
         and event["ts"] != event["thread_ts"]
     ):  
-        parent_message = get_parent_message(event["thread_ts"])
+        try:
+            parent_message = get_parent_message(event["thread_ts"])
+            if not parent_message:
+                print("Parent message is required")
+                return {"status": "error", "reason": "parent message missing"}
 
-        if not parent_message:
-            raise ValueError("Parent message is required")
+            parent_message_id = get_parent_message_id(parent_message)
+            if not parent_message_id:
+                print("Parent message_id not found")
+                return {"status": "error", "reason": "message_id not found"}
 
-        parent_message_id = get_parent_message_id(parent_message)
+            saving_result = save_slack_response(parent_message_id, event["text"])
+            if not saving_result:
+                print("Fail saving slack reply to database")
+            else:
+                print(f"Saving result: {saving_result}")
 
-        if not parent_message_id:
-            raise ValueError("Parent message_id not found")
+        except Exception as e:
+            print(f"⚠️ Error in Slack event handling: {e}")
 
-        saving_result = save_slack_response(parent_message_id, event["text"])
+    # ✅ Always return a 200 OK so Slack doesn't retry
+    return {"status": "ok"}
 
-        if not saving_result:
-            raise ValueError("Fail saving slack reply to database")
-
-        print(f"Saving result: {saving_result}")
 
 if __name__ == "__main__":
     print(f"Listening for Slack replies on port {PORT}")
