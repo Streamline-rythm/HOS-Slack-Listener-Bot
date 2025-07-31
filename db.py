@@ -17,7 +17,6 @@ pool = pooling.MySQLConnectionPool(
     pool_name="cloudsql_pool",
     pool_size=25,
     pool_reset_session=True,
-    pool_timeout=5,  # don't block forever if pool is full
     user=os.getenv("DB_USER"),
     password=os.getenv("DB_PASSWORD"),
     database=os.getenv("DB_NAME"),
